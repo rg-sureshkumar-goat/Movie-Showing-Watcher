@@ -1,0 +1,57 @@
+# Every 15 minutes, check Fandango for Tamil IMAX showings of Ramayana around
+# Austin and text new ones on Telegram. Then commit state/ so the next run
+# remembers what has already been sent.
+name: ramayana - watch
+
+on:
+  schedule:
+    # Off the top of the hour, when GitHub's scheduler is least backed up.
+    - cron: "4,19,34,49 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One run at a time so two runs can't race on state.
+    concurrency:
+      group: ramayana-state
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check showtimes
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python ramayana_bot.py
+
+      - name: Remember what's already been sent
+        # Runs even if the check failed partway, so a message that did go out
+        # is never sent twice.
+        if: always()
+        run: |
+          # --porcelain also reports files that are still untracked, which is
+          # the case on the very first run.
+          if [ -z "$(git status --porcelain -- state/)" ]; then
+            echo "No state change; nothing to commit."
+            exit 0
+          fi
+          git config user.name  "Ramayana watcher"
+          git config user.email "actions@github.com"
+          git add state/
+          git commit -m "state: $(date -u +'%Y-%m-%d %H:%M UTC')"
+          for attempt in 1 2 3; do
+            git pull -q --rebase origin "${GITHUB_REF_NAME}" && git push -q origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            sleep $((attempt * 5))
+          done
+          echo "Could not push state after 3 attempts" >&2
+          exit 1
