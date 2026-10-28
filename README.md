@@ -31,28 +31,40 @@ format. Today that's Cinemark Pflugerville 20 and XD.
 
 ## What you'll get
 
-- **🎬 Tamil IMAX / Tamil Cinemark XD / Tamil 3D found**: one section per format,
-  in that order. Each show appears in only one section: an "IMAX 3D" show is
-  listed under IMAX, and a Cinemark XD 3D show under XD. Tap a time to book.
-- **❓ Language not listed (IMAX or XD only)**: the EVO theaters don't tag a
-  language on Fandango at all, so their IMAX Ramayana shows are sent too, clearly
-  marked. Check the language before buying. Untagged **3D** shows are *not* texted.
-  EVO runs a few every weekend, and they're almost surely Hindi, so they only
-  appear as a count in the daily check-in.
-- **👀 Daily check-in** (first run after 9 AM Austin time): how many shows are
-  listed in each format and how many of those are Tamil, plus a line for every
-  AMC and Cinemark. This also tells you the bot is still running.
-- **⚠️ Alert** if Fandango can't be reached 3 runs in a row.
+There are only two kinds of messages. A day with nothing found is **exactly one
+message**.
 
-Each showtime is sent once. `state/state.json` records what's been sent, and the
-workflow commits it back to the repo after every run.
+- **📅 Daily update**: one message every day, on the first run after 9 AM
+  Austin time. It always fits in a single Telegram message. It leads with either:
+  - **❌ No Tamil showings found yet**, or
+  - **✅ N Tamil showings on sale**, with a booking link for every show still on sale.
+
+  After that come counts per format and a line for every AMC and Cinemark. Any
+  "language not listed" shows also go here (see below). If Fandango couldn't be
+  reached on the last 3+ checks, the update says so instead. That replaces the
+  normal update for the day and isn't sent as an extra message.
+- **🎬 Found!**: sent the moment a new Tamil IMAX, Cinemark XD or 3D showing
+  appears, at any hour, with one section per format in that order. Each show
+  appears in only one section: an "IMAX 3D" show is listed under IMAX, and a
+  Cinemark XD 3D show under XD. Each showtime is texted once.
+
+**Language not listed:** the EVO theaters don't tag a language on Fandango, so
+their IMAX and XD Ramayana shows *might* be Tamil. They aren't confirmed, so they
+don't get their own text. They're listed with booking links in the daily update.
+Untagged 3D shows are only counted. EVO runs a few every weekend, and they're
+almost surely Hindi.
+
+`state/state.json` records what's been texted and whether today's update went
+out. The workflow commits it back to the repo after every run.
 
 ## Setup on GitHub
 
-1. **Telegram bot.** Reuse Gary's bot (same token and chat ID) or make a new one:
-   message **@BotFather** in Telegram, send `/newbot`, copy the token, then send
-   your new bot any message. To find the chat ID, put the token in a local `.env`
-   (copy `.env.example`) and run `python3 ramayana_bot.py --get-chat-id`.
+1. **Telegram bot.** This bot uses its own Telegram bot, separate from Gary's.
+   Message **@BotFather** in Telegram, send `/newbot`, copy the token, then send
+   your new bot any message. To find the chat ID, open
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` and look for
+   `"chat":{"id":`. Or put the token in a local `.env` (copy `.env.example`)
+   and run `python3 ramayana_bot.py --get-chat-id`.
 2. **Create a repo** on github.com, e.g. `ramayana-watcher`. Make it public like
    Gary: Actions minutes are free on public repos. A private repo gets 2,000
    free minutes a month, and this bot uses about 3,000. Nothing private is in the
@@ -61,7 +73,7 @@ workflow commits it back to the repo after every run.
    repository secret: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
 4. **Push this folder** to the repo.
 5. **Test it** under Actions → "ramayana - watch" → Run workflow. The first run
-   after 9 AM sends the daily check-in, so you'll know messages arrive.
+   after 9 AM sends that day's update, so you'll know messages arrive.
 
 GitHub's scheduler is best-effort: runs can start a few minutes late, and
 occasionally one is skipped when GitHub is busy.
@@ -71,8 +83,9 @@ occasionally one is skipped when GitHub is busy.
 ```bash
 python3 ramayana_bot.py --dry-run
 ```
-This prints every Ramayana showtime it finds, the message it would send, and the
-daily check-in. It sends nothing and saves nothing. `--test` sends a test
+This prints every Ramayana showtime it finds, plus the messages it would send:
+the daily update, and a "found" alert if there's a new show. It sends nothing
+and saves nothing. `--test` sends a test
 Telegram message using `.env`.
 
 ## Changing what it looks for
@@ -83,7 +96,7 @@ Edit the settings at the top of `ramayana_bot.py` and push:
 - `LOOKAHEAD_DAYS` / `STOP_AFTER`: how far ahead, and when to stop for good
 - `LANGUAGE_KEYWORD`: e.g. `"telugu"`
 - `FORMATS`: formats to watch, in priority order; add e.g. `"dolby": "Dolby Cinema"`
-- `UNLISTED_ALERT_FORMATS`: formats that get "language not listed" alerts; `()` to turn them off
+- `UNLISTED_DAILY_FORMATS`: formats whose "language not listed" shows are listed in the daily update; `()` to turn this off
 - `PRIORITY_CHAINS`: chains to star and report on daily
 - `ZIP_CODES`: areas to search
-- `HEARTBEAT_HOUR`: `None` to turn off the daily check-in
+- `DAILY_MESSAGE_HOUR`: Austin-time hour of the daily update (default 9 AM)

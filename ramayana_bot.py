@@ -19,6 +19,7 @@ import datetime
 import html
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -46,11 +47,12 @@ FORMATS = {
 }
 
 # Some theaters (EVO Belterra and EVO Kyle, two of the five local IMAX venues)
-# don't tag the language on Fandango at all. Showings in these formats with no
-# language listed are sent too, flagged "language not listed". 3D is left out:
-# EVO runs untagged 3D shows every week that are almost surely Hindi, so those
-# are only counted in the daily check-in. Use () to turn this off.
-UNLISTED_ALERT_FORMATS = ("IMAX", "Cinemark XD")
+# don't tag the language on Fandango at all. Their showings in these formats
+# are listed with booking links in the daily message as "language not listed".
+# They aren't confirmed Tamil, so they never get a text of their own. 3D is
+# left out: EVO runs untagged 3D shows every week that are almost surely
+# Hindi, so those are only counted. Use () to turn this off.
+UNLISTED_DAILY_FORMATS = ("IMAX", "Cinemark XD")
 LANGUAGE_WORDS = ("hindi", "tamil", "telugu", "kannada", "malayalam", "language", "dubbed")
 
 # Which days to watch (Monday is 0): Friday, Saturday, Sunday.
@@ -81,11 +83,14 @@ ZIP_CODES = {
 # All dates and times are Austin time, even on GitHub's UTC runners.
 TIMEZONE = ZoneInfo("America/Chicago")
 
-# Send a short "still watching" summary once a day, on the first run at or
-# after this local hour. Set to None to turn it off.
-HEARTBEAT_HOUR = 9
+# Exactly one daily message, found or not, on the first run at or after this
+# local hour. Found showings are also texted the moment they appear; nothing
+# else is ever sent, so a day with nothing found is one message.
+DAILY_MESSAGE_HOUR = 9
 
-# Alert on Telegram if this many runs in a row cannot reach Fandango.
+# If Fandango can't be reached, the daily message waits for this many failed
+# runs in a row before reporting that instead, so a single blip at 9 AM
+# doesn't replace the real update.
 FAILURE_ALERT_AFTER = 3
 
 REQUEST_DELAY_SECONDS = 0.7
@@ -122,7 +127,7 @@ def load_state():
         with open(STATE_PATH) as f:
             return json.load(f)
     except (OSError, ValueError):
-        return {"notified": {}, "last_heartbeat": None, "failures": 0, "last_failure_alert": None}
+        return {"notified": {}, "last_daily": None, "failures": 0}
 
 
 def save_state(state):
@@ -327,10 +332,15 @@ def send_telegram(text):
         })
 
 
+def visible_len(text):
+    """Length as Telegram counts it: tags and link URLs don't count."""
+    return len(html.unescape(re.sub(r"<[^>]+>", "", text)))
+
+
 def split_message(text):
     chunks, current = [], ""
     for block in text.split("\n\n"):
-        if current and len(current) + len(block) + 2 > TELEGRAM_LIMIT:
+        if current and visible_len(current) + visible_len(block) + 2 > TELEGRAM_LIMIT:
             chunks.append(current)
             current = block
         else:
@@ -364,25 +374,47 @@ def format_showings(shows):
     return blocks
 
 
-def format_matches(confirmed, unlisted):
+def take_blocks(blocks, budget):
+    """As many blocks as fit in `budget` visible characters, then a note
+    counting the rest, so the daily update always fits in one message."""
+    kept, used = [], 0
+    for i, block in enumerate(blocks):
+        size = visible_len(block) + 2
+        if used + size > budget:
+            kept.append(f"…and {len(blocks) - i} more on Fandango.")
+            break
+        kept.append(block)
+        used += size
+    return kept
+
+
+def format_by_format(shows, heading, budget=None):
+    """One section per watched format, in FORMATS order. A budget, if given,
+    is shared by all the sections."""
     e = html.escape
-    lang = LANGUAGE_KEYWORD.title()
     lines = []
     for label in FORMATS.values():
-        shows = [s for s in confirmed if s["watch_format"] == label]
-        if shows:
-            lines.append(f"🎬 <b>Ramayana — {lang} {e(label)} showings found!</b>")
-            lines += format_showings(shows)
-    if unlisted:
-        labels = " / ".join(l for l in FORMATS.values() if any(s["watch_format"] == l for s in unlisted))
-        lines.append(
-            f"❓ <b>Ramayana {e(labels)} — language not listed</b>\n"
-            f"These theaters don't say which language. Could be {lang}; "
-            f"check the booking page or call before buying."
-        )
-        lines += format_showings(unlisted)
+        group = [s for s in shows if s["watch_format"] == label]
+        if not group:
+            continue
+        blocks = format_showings(group)
+        if budget is not None:
+            blocks = take_blocks(blocks, budget)
+            budget = max(budget - sum(visible_len(b) + 2 for b in blocks), 0)
+        lines.append(heading.format(label=e(label)))
+        lines += blocks
+    return lines
+
+
+def format_matches(confirmed):
+    lines = format_by_format(confirmed, f"🎬 <b>Ramayana — {LANGUAGE_KEYWORD.title()} {{label}} showings found!</b>")
     lines.append("Tap a time to book on Fandango.")
     return "\n\n".join(lines)
+
+
+def or_list(items):
+    items = list(items)
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " or " + items[-1]
 
 
 def format_priority_status(showings, theaters):
@@ -408,11 +440,27 @@ def format_priority_status(showings, theaters):
     return "⭐ <b>AMC &amp; Cinemark</b>\n" + "\n".join(lines) if lines else ""
 
 
-def format_summary(showings, theaters, confirmed, unlisted, dates):
+def daily_heading(today):
+    return f"📅 <b>Ramayana daily update — {html.escape(pretty_date(today.isoformat()))}</b>"
+
+
+def format_daily(today, showings, theaters, confirmed, unlisted, dates, errors, requests):
+    """The one message sent every day: found or not found first, then detail."""
     e = html.escape
     lang_name = LANGUAGE_KEYWORD.title()
+    lines = [daily_heading(today)]
+    if confirmed:
+        per_format = ", ".join(f"{f}: {n}" for f in FORMATS.values()
+                               if (n := sum(1 for s in confirmed if s["watch_format"] == f)))
+        lines.append(f"✅ <b>{len(confirmed)} {lang_name} showing{'s' if len(confirmed) != 1 else ''} "
+                     f"on sale</b> ({e(per_format)}). Tap a time to book.")
+        lines += format_by_format(confirmed, f"🎬 <b>{lang_name} {{label}}</b>", budget=1200)
+    else:
+        lines.append(f"❌ <b>No {lang_name} showings found yet</b> in {e(or_list(FORMATS.values()))}.")
+
     lang = [s for s in showings if is_language(s)]
-    span = f"{pretty_date(dates[0].isoformat())} – {pretty_date(dates[-1].isoformat())}" if dates else "none"
+    short = lambda d: d.strftime("%b ") + str(d.day)
+    span = f"{short(dates[0])} to {short(dates[-1])}"
     counts = [f"• {len(showings)} Ramayana showtimes listed",
               f"• {len(lang)} in {lang_name} (any format)"]
     for f in FORMATS.values():
@@ -421,20 +469,38 @@ def format_summary(showings, theaters, confirmed, unlisted, dates):
         counts.append(f"• {f}: {total} shows, {found} in {lang_name}")
     if unlisted:
         counts.append(f"• {len(unlisted)} with no language listed")
-    lines = [
-        "👀 <b>Ramayana watcher — daily check-in</b>",
-        f"Austin area, Fri–Sun showtimes, {e(span)}:\n" + e("\n".join(counts)),
-    ]
+    lines.append(f"Checked every Fri–Sun from {e(span)}, Austin area:\n" + e("\n".join(counts)))
+
     status = format_priority_status(showings, theaters)
     if status:
         lines.append(status)
+
+    maybe = [s for s in unlisted if s["watch_format"] in UNLISTED_DAILY_FORMATS]
+    if maybe:
+        lines.append(f"❓ <b>Language not listed</b>: these theaters don't say which language. "
+                     f"Could be {lang_name}, so check before buying.")
+        lines += take_blocks(format_showings(maybe), 600)
+
     other = [s for s in lang if not s["watch_format"]]
     if other:
         where = sorted({f"{s['theater']} ({pretty_date(s['date'])})" for s in other})
-        lines.append(f"{lang_name} in other formats is playing at: " + e("; ".join(where[:10])))
-    if not confirmed:
-        lines.append("Still watching. You'll get a message the moment one is listed.")
+        lines.append(f"{lang_name} in other formats is playing at: " + e("; ".join(where[:6])))
+
+    if errors:
+        lines.append(f"⚠️ {len(errors)} of {requests} Fandango checks failed this run, so this may be incomplete.")
+    lines.append("I'll text you the moment a new one is listed." if confirmed
+                 else f"I'll text you the moment a {lang_name} showing is listed.")
     return "\n\n".join(lines)
+
+
+def format_daily_failure(today, failures, error):
+    return "\n\n".join([
+        daily_heading(today),
+        f"⚠️ <b>Couldn't reach Fandango</b> on the last {failures} checks, so I can't tell you "
+        f"yet whether a {LANGUAGE_KEYWORD.title()} showing was found today.",
+        f"Latest error: {html.escape(error)}",
+        "I'll keep checking every 15 minutes and text you the moment one is found.",
+    ])
 
 
 # -------------------------------------------------------------------- main ---
@@ -452,50 +518,44 @@ def run(dry_run=False):
     state = load_state()
     showings, theaters, errors, requests = collect_showings(dates)
     confirmed, unlisted = classify(showings)
-    new_confirmed = [s for s in confirmed if s["id"] not in state["notified"]]
-    new_unlisted = [s for s in unlisted if s["id"] not in state["notified"]
-                    and s["watch_format"] in UNLISTED_ALERT_FORMATS]
-    new = new_confirmed + new_unlisted
+    new = [s for s in confirmed if s["id"] not in state["notified"]]
+    failed = bool(errors) and len(errors) == requests
     log(f"{dates[0]}..{dates[-1]} ({len(dates)} days): {requests} requests, {len(errors)} failed; "
         f"{len(showings)} Ramayana showtimes, {len(confirmed)} {LANGUAGE_KEYWORD} in watched formats, "
         f"{len(unlisted)} with no language, {len(new)} new")
 
     if dry_run:
         confirmed_ids = {s["id"] for s in confirmed}
-        maybe_ids = {s["id"] for s in unlisted if s["watch_format"] in UNLISTED_ALERT_FORMATS}
+        maybe_ids = {s["id"] for s in unlisted if s["watch_format"] in UNLISTED_DAILY_FORMATS}
         for s in sorted(showings, key=lambda s: (s["sort_key"], s["theater"])):
             flag = "MATCH" if s["id"] in confirmed_ids else "MAYBE" if s["id"] in maybe_ids else "     "
             star = "*" if s["priority"] else " "
             print(f"  {flag} {star} {s['date']} {s['time']:>6}  [{s['watch_format'] or '-'}] {s['theater']} — "
                   f"{s['format']} — {', '.join(s['tags'])}")
-        if new:
-            print("\n--- Telegram message that would be sent ---\n" + format_matches(new_confirmed, new_unlisted))
-        print("\n--- Daily check-in ---\n" + format_summary(showings, theaters, confirmed, unlisted, dates))
+        messages = [format_matches(new)] if new else []
+        messages.append(format_daily(today, showings, theaters, confirmed, unlisted, dates, errors, requests))
+        for text in messages:
+            parts = len(split_message(text))
+            print(f"\n--- Telegram message ({visible_len(text)} characters, {parts} part{'s' * (parts > 1)}) ---\n{text}")
         return
 
-    if errors and len(errors) == requests:
-        state["failures"] = state.get("failures", 0) + 1
-        if state["failures"] >= FAILURE_ALERT_AFTER and state.get("last_failure_alert") != today.isoformat():
-            send_telegram(
-                "⚠️ <b>Ramayana watcher can't reach Fandango</b>\n\n"
-                f"The last {state['failures']} checks failed. Latest error:\n{html.escape(errors[-1])}"
-            )
-            state["last_failure_alert"] = today.isoformat()
-        save_state(state)
-        return
-    state["failures"] = 0
+    state["failures"] = state.get("failures", 0) + 1 if failed else 0
 
     if new:
-        send_telegram(format_matches(new_confirmed, new_unlisted))
+        send_telegram(format_matches(new))
         for s in new:
             state["notified"][s["id"]] = {k: s[k] for k in ("date", "time", "theater", "url")}
         save_state(state)
         log(f"sent {len(new)} new showtimes to Telegram")
 
-    if (HEARTBEAT_HOUR is not None and now().hour >= HEARTBEAT_HOUR
-            and state.get("last_heartbeat") != today.isoformat()):
-        send_telegram(format_summary(showings, theaters, confirmed, unlisted, dates))
-        state["last_heartbeat"] = today.isoformat()
+    daily_due = now().hour >= DAILY_MESSAGE_HOUR and state.get("last_daily") != today.isoformat()
+    if daily_due and (not failed or state["failures"] >= FAILURE_ALERT_AFTER):
+        if failed:
+            send_telegram(format_daily_failure(today, state["failures"], errors[-1]))
+        else:
+            send_telegram(format_daily(today, showings, theaters, confirmed, unlisted, dates, errors, requests))
+        state["last_daily"] = today.isoformat()
+        log("sent the daily update")
 
     save_state(state)
 
