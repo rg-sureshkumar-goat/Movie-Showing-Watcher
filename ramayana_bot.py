@@ -3,9 +3,9 @@
 Ramayana Tamil IMAX watcher.
 
 Checks Fandango showtimes for theaters in and around Austin, TX and sends a
-Telegram message with booking links as soon as a Tamil-language IMAX showing
-of Ramayana is listed on a Friday, Saturday or Sunday. Each showtime is only
-sent once. Standard library only.
+Telegram message with booking links as soon as a Tamil-language showing of
+Ramayana on an IMAX or Cinemark XD screen is listed on a Friday, Saturday or
+Sunday. Each showtime is only sent once. Standard library only.
 
 Usage:
   python3 ramayana_bot.py                # check once, send new matches
@@ -34,12 +34,23 @@ ENV_PATH = os.path.join(HERE, ".env")
 
 MOVIE_KEYWORD = "ramayana"
 LANGUAGE_KEYWORD = "tamil"
-FORMAT_KEYWORD = "imax"
+
+# Screen formats to watch, as Fandango tag keyword -> label. Each format gets
+# its own section in the text. They're checked in this order, so an "IMAX 3D"
+# show counts as IMAX only. No Cinemark near Austin has IMAX; its premium
+# screen is Cinemark XD, so that is watched too.
+FORMATS = {
+    "imax": "IMAX",
+    "xd": "Cinemark XD",
+    "3d": "3D",
+}
 
 # Some theaters (EVO Belterra and EVO Kyle, two of the five local IMAX venues)
-# don't tag the language on Fandango at all. When True, IMAX showings with no
-# language listed are sent too, flagged as "language not listed".
-NOTIFY_UNLISTED_LANGUAGE = True
+# don't tag the language on Fandango at all. Showings in these formats with no
+# language listed are sent too, flagged "language not listed". 3D is left out:
+# EVO runs untagged 3D shows every week that are almost surely Hindi, so those
+# are only counted in the daily check-in. Use () to turn this off.
+UNLISTED_ALERT_FORMATS = ("IMAX", "Cinemark XD")
 LANGUAGE_WORDS = ("hindi", "tamil", "telugu", "kannada", "malayalam", "language", "dubbed")
 
 # Which days to watch (Monday is 0): Friday, Saturday, Sunday.
@@ -203,8 +214,9 @@ def collect_showings(dates):
                     "city": theater.get("city", ""),
                     "priority": priority,
                     # Fandango's format list can miss a screen the name advertises
-                    # ("Cinemark Dallas XD and IMAX"), so check both.
-                    "has_format": contains((theater.get("formats") or []) + [theater.get("name", "")], FORMAT_KEYWORD),
+                    # ("Cinemark Pflugerville 20 and XD"), so check both.
+                    "formats": [label for keyword, label in FORMATS.items()
+                                if contains((theater.get("formats") or []) + [theater.get("name", "")], keyword)],
                 }
                 for movie in theater.get("movies") or []:
                     if MOVIE_KEYWORD not in movie.get("title", "").lower():
@@ -221,7 +233,7 @@ def collect_showings(dates):
                                 # listings, so key on what identifies the screening.
                                 key = "|".join([theater.get("id", ""), when,
                                                 str(group.get("movieVariantId", "")), ",".join(sorted(tags))])
-                                showings[key] = {
+                                showing = showings[key] = {
                                     "id": key,
                                     "theater_id": theater.get("id", ""),
                                     "date": date.isoformat(),
@@ -237,6 +249,7 @@ def collect_showings(dates):
                                     "sold_out": bool(show.get("isSoldOut")),
                                     "expired": bool(show.get("expired")),
                                 }
+                                showing["watch_format"] = watched_format(showing)
     return list(showings.values()), theaters_seen, errors, requests
 
 
@@ -244,8 +257,12 @@ def is_language(s):
     return contains([s["title"], s["format"]] + s["tags"], LANGUAGE_KEYWORD)
 
 
-def is_format(s):
-    return contains([s["format"]] + s["tags"], FORMAT_KEYWORD)
+def watched_format(s):
+    """Label of the first watched format this showing is in, or None."""
+    for keyword, label in FORMATS.items():
+        if contains([s["format"]] + s["tags"], keyword):
+            return label
+    return None
 
 
 def has_language_info(s):
@@ -266,15 +283,15 @@ def is_bookable(s):
 
 def classify(showings):
     """Split bookable showings into (confirmed, unlisted): confirmed are tagged
-    with the language and format; unlisted are in the format but the theater
-    gave no language at all."""
+    with the language and a watched format; unlisted are in a watched format
+    but the theater gave no language at all."""
     confirmed, unlisted = [], []
     for s in showings:
-        if not (is_format(s) and is_bookable(s)):
+        if not (s["watch_format"] and is_bookable(s)):
             continue
         if is_language(s):
             confirmed.append(s)
-        elif NOTIFY_UNLISTED_LANGUAGE and not has_language_info(s):
+        elif not has_language_info(s):
             unlisted.append(s)
     return confirmed, unlisted
 
@@ -335,8 +352,8 @@ def format_showings(shows):
     for s in sorted(shows, key=lambda s: (not s["priority"], s["sort_key"], s["theater"])):
         groups.setdefault((s["date"], s["theater"], s["city"], s["priority"], tuple(s["tags"])), []).append(s)
     for (date, theater, city, priority, tags), group in groups.items():
-        relevant = [t for t in tags if contains([t], FORMAT_KEYWORD) or contains([t], LANGUAGE_KEYWORD)
-                    or contains([t], "subtitle")]
+        relevant = [t for t in tags if any(contains([t], k) for k in FORMATS)
+                    or contains([t], LANGUAGE_KEYWORD) or contains([t], "subtitle")]
         times = "  ".join(f'<a href="{e(s["url"])}">{e(s["time"])}</a>' for s in group)
         star = "⭐ " if priority else ""
         blocks.append(
@@ -348,14 +365,18 @@ def format_showings(shows):
 
 
 def format_matches(confirmed, unlisted):
-    lang, fmt = LANGUAGE_KEYWORD.title(), FORMAT_KEYWORD.upper()
+    e = html.escape
+    lang = LANGUAGE_KEYWORD.title()
     lines = []
-    if confirmed:
-        lines.append(f"🎬 <b>Ramayana — {lang} {fmt} showings found!</b>")
-        lines += format_showings(confirmed)
+    for label in FORMATS.values():
+        shows = [s for s in confirmed if s["watch_format"] == label]
+        if shows:
+            lines.append(f"🎬 <b>Ramayana — {lang} {e(label)} showings found!</b>")
+            lines += format_showings(shows)
     if unlisted:
+        labels = " / ".join(l for l in FORMATS.values() if any(s["watch_format"] == l for s in unlisted))
         lines.append(
-            f"❓ <b>Ramayana {fmt} — language not listed</b>\n"
+            f"❓ <b>Ramayana {e(labels)} — language not listed</b>\n"
             f"These theaters don't say which language. Could be {lang}; "
             f"check the booking page or call before buying."
         )
@@ -365,48 +386,52 @@ def format_matches(confirmed, unlisted):
 
 
 def format_priority_status(showings, theaters):
-    """One line per AMC/Cinemark theater: whether it has the format, and which
-    languages of the movie it is showing in the watch window."""
+    """One line per AMC/Cinemark theater: which languages it is showing the
+    movie in during the watch window, and how many shows in each format."""
     e = html.escape
-    fmt = FORMAT_KEYWORD.upper()
+    order = list(FORMATS.values())
     lines = []
-    ranked = sorted((t for t in theaters.values() if t["priority"]), key=lambda t: (not t["has_format"], t["name"]))
+    ranked = sorted((t for t in theaters.values() if t["priority"]),
+                    key=lambda t: (min((order.index(f) for f in t["formats"]), default=len(order)), t["name"]))
     for t in ranked:
         here = [s for s in showings if s["theater"] == t["name"]]
-        label = f"{e(t['name'])}" + (f" ({fmt})" if t["has_format"] else "")
+        label = e(t["name"]) + (f" ({e(', '.join(t['formats']))})" if t["formats"] else "")
         if not here:
             lines.append(f"• {label}: not showing it on these days yet")
             continue
         langs = sorted({l for s in here for l in languages(s)}) or ["language not listed"]
-        in_fmt = sum(1 for s in here if is_format(s))
         detail = f"{', '.join(langs)}, {len(here)} shows"
-        if t["has_format"]:
-            detail += f", {in_fmt} in {fmt}"
+        per_format = [(f, sum(1 for s in here if s["watch_format"] == f)) for f in order]
+        if any(n for _, n in per_format):
+            detail += " (" + ", ".join(f"{f}: {n}" for f, n in per_format if n) + ")"
         lines.append(f"• {label}: {e(detail)}")
     return "⭐ <b>AMC &amp; Cinemark</b>\n" + "\n".join(lines) if lines else ""
 
 
 def format_summary(showings, theaters, confirmed, unlisted, dates):
     e = html.escape
-    lang_name, fmt = LANGUAGE_KEYWORD.title(), FORMAT_KEYWORD.upper()
+    lang_name = LANGUAGE_KEYWORD.title()
     lang = [s for s in showings if is_language(s)]
-    in_fmt = [s for s in showings if is_format(s)]
     span = f"{pretty_date(dates[0].isoformat())} – {pretty_date(dates[-1].isoformat())}" if dates else "none"
+    counts = [f"• {len(showings)} Ramayana showtimes listed",
+              f"• {len(lang)} in {lang_name} (any format)"]
+    for f in FORMATS.values():
+        total = sum(1 for s in showings if s["watch_format"] == f)
+        found = sum(1 for s in confirmed if s["watch_format"] == f)
+        counts.append(f"• {f}: {total} shows, {found} in {lang_name}")
+    if unlisted:
+        counts.append(f"• {len(unlisted)} with no language listed")
     lines = [
         "👀 <b>Ramayana watcher — daily check-in</b>",
-        f"Austin area, Fri–Sun showtimes, {e(span)}:\n"
-        f"• {len(showings)} Ramayana showtimes listed\n"
-        f"• {len(lang)} in {lang_name} (any format)\n"
-        f"• {len(in_fmt)} in {fmt} (any language)\n"
-        f"• {len(confirmed)} {lang_name} {fmt}"
-        + (f"\n• {len(unlisted)} {fmt} with language not listed" if unlisted else ""),
+        f"Austin area, Fri–Sun showtimes, {e(span)}:\n" + e("\n".join(counts)),
     ]
     status = format_priority_status(showings, theaters)
     if status:
         lines.append(status)
-    if lang and not confirmed:
-        where = sorted({f"{s['theater']} ({pretty_date(s['date'])})" for s in lang})
-        lines.append(f"{lang_name} (non-{fmt}) is playing at: " + e("; ".join(where[:10])))
+    other = [s for s in lang if not s["watch_format"]]
+    if other:
+        where = sorted({f"{s['theater']} ({pretty_date(s['date'])})" for s in other})
+        lines.append(f"{lang_name} in other formats is playing at: " + e("; ".join(where[:10])))
     if not confirmed:
         lines.append("Still watching. You'll get a message the moment one is listed.")
     return "\n\n".join(lines)
@@ -428,19 +453,21 @@ def run(dry_run=False):
     showings, theaters, errors, requests = collect_showings(dates)
     confirmed, unlisted = classify(showings)
     new_confirmed = [s for s in confirmed if s["id"] not in state["notified"]]
-    new_unlisted = [s for s in unlisted if s["id"] not in state["notified"]]
+    new_unlisted = [s for s in unlisted if s["id"] not in state["notified"]
+                    and s["watch_format"] in UNLISTED_ALERT_FORMATS]
     new = new_confirmed + new_unlisted
     log(f"{dates[0]}..{dates[-1]} ({len(dates)} days): {requests} requests, {len(errors)} failed; "
-        f"{len(showings)} Ramayana showtimes, {len(confirmed)} {LANGUAGE_KEYWORD} {FORMAT_KEYWORD}, "
-        f"{len(unlisted)} {FORMAT_KEYWORD} with no language, {len(new)} new")
+        f"{len(showings)} Ramayana showtimes, {len(confirmed)} {LANGUAGE_KEYWORD} in watched formats, "
+        f"{len(unlisted)} with no language, {len(new)} new")
 
     if dry_run:
         confirmed_ids = {s["id"] for s in confirmed}
-        unlisted_ids = {s["id"] for s in unlisted}
+        maybe_ids = {s["id"] for s in unlisted if s["watch_format"] in UNLISTED_ALERT_FORMATS}
         for s in sorted(showings, key=lambda s: (s["sort_key"], s["theater"])):
-            flag = "MATCH" if s["id"] in confirmed_ids else "MAYBE" if s["id"] in unlisted_ids else "     "
+            flag = "MATCH" if s["id"] in confirmed_ids else "MAYBE" if s["id"] in maybe_ids else "     "
             star = "*" if s["priority"] else " "
-            print(f"  {flag} {star} {s['date']} {s['time']:>6}  {s['theater']} — {s['format']} — {', '.join(s['tags'])}")
+            print(f"  {flag} {star} {s['date']} {s['time']:>6}  [{s['watch_format'] or '-'}] {s['theater']} — "
+                  f"{s['format']} — {', '.join(s['tags'])}")
         if new:
             print("\n--- Telegram message that would be sent ---\n" + format_matches(new_confirmed, new_unlisted))
         print("\n--- Daily check-in ---\n" + format_summary(showings, theaters, confirmed, unlisted, dates))

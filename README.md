@@ -1,10 +1,11 @@
 # Ramayana Tamil IMAX watcher
 
 Checks Fandango every 15 minutes for **Ramayana: Rise of a Legend** showings in
-**Tamil** on **IMAX** screens around Austin, TX, on any **Friday, Saturday or
-Sunday**. When one shows up, it sends you a Telegram message with a booking link
-for each showtime. It runs on GitHub Actions, like Gary, so it keeps checking
-while your Mac is asleep.
+**Tamil** around Austin, TX, on any **Friday, Saturday or Sunday**, in any of
+three formats: **IMAX**, **Cinemark XD** and **3D**. When one shows up, it sends
+you a Telegram message with a booking link for each showtime. Each format gets
+its own section in the message. It runs on GitHub Actions, like Gary, so it
+keeps checking while your Mac is asleep.
 
 Each run looks at every Fri/Sat/Sun from Nov 6 (the first weekend after the
 Nov 5 opening) to 4 weeks out. New weekends roll in on their own as theaters
@@ -25,18 +26,22 @@ Each zip searches roughly 15 miles around it:
 **AMC and Cinemark (⭐):** any match at these chains is starred and listed first.
 The daily check-in also reports on each of their local theaters. Of the 3 AMCs
 nearby, only **AMC Barton Creek Square 14** has IMAX. **No Cinemark in the Austin
-area has IMAX.** Their premium screen is Cinemark XD. To count XD too, see
-"Changing what it looks for" below.
+area has IMAX.** Their premium screen is Cinemark XD, so XD is watched as its own
+format. Today that's Cinemark Pflugerville 20 and XD.
 
 ## What you'll get
 
-- **🎬 Tamil IMAX found**: the theater lists the show as Tamil and IMAX. Tap a time to book.
-- **❓ IMAX, language not listed**: the EVO theaters don't tag a language on
-  Fandango at all, so their IMAX Ramayana shows are sent too, clearly marked. Check
-  the language before buying.
+- **🎬 Tamil IMAX / Tamil Cinemark XD / Tamil 3D found**: one section per format,
+  in that order. Each show appears in only one section: an "IMAX 3D" show is
+  listed under IMAX, and a Cinemark XD 3D show under XD. Tap a time to book.
+- **❓ Language not listed (IMAX or XD only)**: the EVO theaters don't tag a
+  language on Fandango at all, so their IMAX Ramayana shows are sent too, clearly
+  marked. Check the language before buying. Untagged **3D** shows are *not* texted.
+  EVO runs a few every weekend, and they're almost surely Hindi, so they only
+  appear as a count in the daily check-in.
 - **👀 Daily check-in** (first run after 9 AM Austin time): how many shows are
-  Tamil and how many are IMAX, plus a line for every AMC and Cinemark. This also
-  tells you the bot is still running.
+  listed in each format and how many of those are Tamil, plus a line for every
+  AMC and Cinemark. This also tells you the bot is still running.
 - **⚠️ Alert** if Fandango can't be reached 3 runs in a row.
 
 Each showtime is sent once. `state/state.json` records what's been sent, and the
@@ -77,8 +82,8 @@ Edit the settings at the top of `ramayana_bot.py` and push:
 - `WATCH_WEEKDAYS`: days to watch (Monday is 0; Fri/Sat/Sun is `(4, 5, 6)`)
 - `LOOKAHEAD_DAYS` / `STOP_AFTER`: how far ahead, and when to stop for good
 - `LANGUAGE_KEYWORD`: e.g. `"telugu"`
-- `FORMAT_KEYWORD`: e.g. `"xd"` for Cinemark XD, or `"dolby"`
+- `FORMATS`: formats to watch, in priority order; add e.g. `"dolby": "Dolby Cinema"`
+- `UNLISTED_ALERT_FORMATS`: formats that get "language not listed" alerts; `()` to turn them off
 - `PRIORITY_CHAINS`: chains to star and report on daily
 - `ZIP_CODES`: areas to search
-- `NOTIFY_UNLISTED_LANGUAGE`: `False` to skip the "language not listed" alerts
 - `HEARTBEAT_HOUR`: `None` to turn off the daily check-in
