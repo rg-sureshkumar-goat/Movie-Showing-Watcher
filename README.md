@@ -75,8 +75,39 @@ out. The workflow commits it back to the repo after every run.
 5. **Test it** under Actions → "ramayana - watch" → Run workflow. The first run
    after 9 AM sends that day's update, so you'll know messages arrive.
 
-GitHub's scheduler is best-effort: runs can start a few minutes late, and
-occasionally one is skipped when GitHub is busy.
+## Reliable 15-minute runs (cron-job.org)
+
+GitHub's own schedule is best-effort, and on this account it drops most runs.
+Gary's 30-minute lane and this bot both ran only every 4–6 hours. So a free
+outside timer starts the workflow every 15 minutes instead. GitHub runs those
+right away.
+
+1. **Make a GitHub token that can only start this workflow.** Go to GitHub →
+   Settings → Developer settings → Personal access tokens → **Fine-grained
+   tokens** → Generate new token:
+   - Name: `ramayana cron`
+   - Expiration: a date after Jan 31, 2027 (when the bot stops)
+   - Repository access: **Only select repositories** → `Movie-Showing-Watcher`
+   - Permissions → Repository permissions → **Actions: Read and write**. Leave
+     everything else at "No access".
+
+   Copy the token (it starts with `github_pat_`).
+2. **Create a free account at [cron-job.org](https://cron-job.org)**, then
+   **Create cronjob**:
+   - URL: `https://api.github.com/repos/rg-sureshkumar-goat/Movie-Showing-Watcher/actions/workflows/watch.yml/dispatches`
+   - Schedule: every 15 minutes
+   - Under **Advanced**:
+     - Request method: `POST`
+     - Headers:
+       - `Authorization`: `Bearer <your github_pat_ token>`
+       - `Accept`: `application/vnd.github+json`
+       - `X-GitHub-Api-Version`: `2022-11-28`
+     - Request body: `{"ref":"main"}`
+   - Save, then click **Test run**. A `204` response means it worked, and a new
+     "workflow_dispatch" run appears in the repo's Actions tab.
+
+The token can only start and manage workflow runs in this one repo. It can't
+change your code, read your secrets, or touch any other repo.
 
 ## Running it locally
 
