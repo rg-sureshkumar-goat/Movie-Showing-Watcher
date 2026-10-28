@@ -1,13 +1,13 @@
-# Every 15 minutes, check Fandango for Tamil IMAX showings of Ramayana around
+# On a schedule, check Fandango for Tamil IMAX showings of Ramayana around
 # Austin and text new ones on Telegram. Then commit state/ so the next run
 # remembers what has already been sent.
 name: ramayana - watch
 
 on:
-  # GitHub drops most scheduled runs on this account (it ran every 4-6 hours,
-  # not every 15 minutes), so cron-job.org starts this workflow every 15
-  # minutes through workflow_dispatch; see README.md. The schedule stays as a
-  # backup. Overlapping runs are harmless: they queue, and state dedupes them.
+  # GitHub drops most scheduled runs on this account (in practice every 3-7
+  # hours, not every 15 minutes). That delay is accepted; README.md describes
+  # an optional cron-job.org trigger through workflow_dispatch. Overlapping
+  # runs are harmless: they queue, and state dedupes them.
   schedule:
     # Off the top of the hour, when GitHub's scheduler is least backed up.
     - cron: "4,19,34,49 * * * *"

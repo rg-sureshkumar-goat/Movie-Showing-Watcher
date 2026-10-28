@@ -84,7 +84,7 @@ ZIP_CODES = {
 TIMEZONE = ZoneInfo("America/Chicago")
 
 # Exactly one daily message, found or not, on the first run at or after this
-# local hour. Found showings are also texted the moment they appear; nothing
+# local hour. Found showings are also texted on the first run that sees them; nothing
 # else is ever sent, so a day with nothing found is one message.
 DAILY_MESSAGE_HOUR = 9
 
@@ -488,8 +488,8 @@ def format_daily(today, showings, theaters, confirmed, unlisted, dates, errors, 
 
     if errors:
         lines.append(f"⚠️ {len(errors)} of {requests} Fandango checks failed this run, so this may be incomplete.")
-    lines.append("I'll text you the moment a new one is listed." if confirmed
-                 else f"I'll text you the moment a {lang_name} showing is listed.")
+    lines.append("I'll text you as soon as I spot a new one." if confirmed
+                 else f"I'll text you as soon as I spot a {lang_name} showing.")
     return "\n\n".join(lines)
 
 
@@ -499,7 +499,7 @@ def format_daily_failure(today, failures, error):
         f"⚠️ <b>Couldn't reach Fandango</b> on the last {failures} checks, so I can't tell you "
         f"yet whether a {LANGUAGE_KEYWORD.title()} showing was found today.",
         f"Latest error: {html.escape(error)}",
-        "I'll keep checking every 15 minutes and text you the moment one is found.",
+        "I'll keep checking and text you as soon as one is found.",
     ])
 
 

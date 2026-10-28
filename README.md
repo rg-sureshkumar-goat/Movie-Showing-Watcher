@@ -1,11 +1,17 @@
 # Ramayana Tamil IMAX watcher
 
-Checks Fandango every 15 minutes for **Ramayana: Rise of a Legend** showings in
-**Tamil** around Austin, TX, on any **Friday, Saturday or Sunday**, in any of
-three formats: **IMAX**, **Cinemark XD** and **3D**. When one shows up, it sends
-you a Telegram message with a booking link for each showtime. Each format gets
-its own section in the message. It runs on GitHub Actions, like Gary, so it
-keeps checking while your Mac is asleep.
+Checks Fandango for **Ramayana: Rise of a Legend** showings in **Tamil** around
+Austin, TX, on any **Friday, Saturday or Sunday**, in any of three formats:
+**IMAX**, **Cinemark XD** and **3D**. When one shows up, it sends you a Telegram
+message with a booking link for each showtime. Each format gets its own section
+in the message. It runs on GitHub Actions, like Gary, so it keeps checking while
+your Mac is asleep.
+
+**Timing:** the workflow asks GitHub to run it every 15 minutes, but GitHub
+drops most scheduled runs on this account. In practice it checks every 3–7
+hours. So a new show can reach you a few hours after it's listed, and the daily
+update can arrive any time from 9 AM to mid-afternoon. To get true 15-minute
+checks, see the optional cron-job.org setup below.
 
 Each run looks at every Fri/Sat/Sun from Nov 6 (the first weekend after the
 Nov 5 opening) to 4 weeks out. New weekends roll in on their own as theaters
@@ -43,8 +49,8 @@ message**.
   "language not listed" shows also go here (see below). If Fandango couldn't be
   reached on the last 3+ checks, the update says so instead. That replaces the
   normal update for the day and isn't sent as an extra message.
-- **🎬 Found!**: sent the moment a new Tamil IMAX, Cinemark XD or 3D showing
-  appears, at any hour, with one section per format in that order. Each show
+- **🎬 Found!**: sent at any hour, on the first check that sees a new Tamil
+  IMAX, Cinemark XD or 3D showing, with one section per format in that order. Each show
   appears in only one section: an "IMAX 3D" show is listed under IMAX, and a
   Cinemark XD 3D show under XD. Each showtime is texted once.
 
@@ -75,12 +81,13 @@ out. The workflow commits it back to the repo after every run.
 5. **Test it** under Actions → "ramayana - watch" → Run workflow. The first run
    after 9 AM sends that day's update, so you'll know messages arrive.
 
-## Reliable 15-minute runs (cron-job.org)
+## Optional: reliable 15-minute runs (cron-job.org)
 
-GitHub's own schedule is best-effort, and on this account it drops most runs.
-Gary's 30-minute lane and this bot both ran only every 4–6 hours. So a free
-outside timer starts the workflow every 15 minutes instead. GitHub runs those
-right away.
+Not set up. The bot works without it, just with the delays described at the
+top. GitHub's own schedule is best-effort, and on this account it drops most
+runs. Gary's 30-minute lane and this bot both ran only every 3–7 hours. A free
+outside timer can start the workflow every 15 minutes instead, and GitHub runs
+those right away.
 
 1. **Make a GitHub token that can only start this workflow.** Go to GitHub →
    Settings → Developer settings → Personal access tokens → **Fine-grained
