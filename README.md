@@ -24,7 +24,7 @@ Each zip searches roughly 15 miles around it:
 | 78620 | Dripping Springs / Bee Cave | EVO Cinemas Belterra Village + IMAX |
 
 **AMC and Cinemark (⭐):** any match at these chains is starred and listed first.
-The daily check-in also reports on each of their local theaters. Of the 3 AMCs
+The daily update also reports on each of their local theaters. Of the 3 AMCs
 nearby, only **AMC Barton Creek Square 14** has IMAX. **No Cinemark in the Austin
 area has IMAX.** Their premium screen is Cinemark XD, so XD is watched as its own
 format. Today that's Cinemark Pflugerville 20 and XD.

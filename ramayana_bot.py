@@ -66,7 +66,7 @@ LOOKAHEAD_DAYS = 28
 STOP_AFTER = datetime.date(2027, 1, 31)
 
 # Chains to watch most closely: matches there are starred and listed first,
-# and the daily check-in reports on every one of their local theaters.
+# and the daily update reports on every one of their local theaters.
 PRIORITY_CHAINS = ("amc", "cinemark")
 
 # Fandango returns theaters within ~15 miles of each zip. Together these cover
